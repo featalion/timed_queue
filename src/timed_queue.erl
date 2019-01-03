@@ -33,6 +33,8 @@
              , prolongation_error/0
              ]).
 
+%% API functions
+
 -spec new() -> queue() | no_return().
 new() ->
   new(#{}).
@@ -42,23 +44,6 @@ new(Config) ->
   Queue0 = #timed_queue{tree = gb_trees:empty()},
   Queue1 = set_unique(Queue0, maps:get(unique, Config, false)),
   set_max_reservations(Queue1, maps:get(max_reservations, Config, unlimited)).
-
--spec set_unique(queue(), any()) -> queue() | no_return().
-set_unique(Queue, true) ->
-  Queue#timed_queue{set = sets:new(), unique = true};
-set_unique(Queue, false) ->
-  Queue;
-set_unique(_Queue, _Unique) ->
-  error(bad_arg, {unique, must_be_boolean}).
-
--spec set_max_reservations(queue(), any()) -> queue() | no_return().
-set_max_reservations(Queue, MaxReservations)
-  when is_integer(MaxReservations) andalso MaxReservations > 0 ->
-  Queue#timed_queue{max_reservations = MaxReservations};
-set_max_reservations(Queue, unlimited) ->
-  Queue;
-set_max_reservations(_Queue, _MaxReservations) ->
-  error(bad_arg, {max_reservations, must_be_positive_integer}).
 
 -spec insert(value(), queue()) -> queue().
 insert(Value, Queue = #timed_queue{unique = true, set = ValuesSet}) ->
@@ -78,16 +63,6 @@ insert(Value, Queue) ->
   {_RealKey, NewQueue} = insert(Key, Entry, Queue),
   NewQueue.
 
--spec insert(key(), entry(), queue()) -> {key(), queue()}.
-insert(Key, Entry, Queue = #timed_queue{tree = Tree}) ->
-  case gb_trees:is_defined(Key, Tree) of
-    true ->
-      insert(Key + 1, Entry, Queue); % find available key
-    false ->
-      NewTree = gb_trees:insert(Key, Entry, Tree),
-      {Key, Queue#timed_queue{tree = NewTree}}
-  end.
-
 -spec reserve(reservation_time(), queue()) -> {key(), value(), queue()} |
                                               {queue_empty, queue()}.
 reserve(Millis, Queue = #timed_queue{tree = Tree}) ->
@@ -104,24 +79,6 @@ reserve(Millis, Queue = #timed_queue{tree = Tree}) ->
           do_reserve(Key, Entry, Millis, NowNanos, Queue)
       end
   end.
-
--spec do_reserve(key(), entry(), reservation_time(), pos_integer(), queue())
-                -> {key(), value(), queue()} | {queue_empty, queue()}.
-do_reserve(Key,
-           Entry = #entry{reservations = Reservs},
-           Millis,
-           NowNanos,
-           Queue = #timed_queue{tree = Tree, max_reservations = MaxReservs})
-  when MaxReservs == unlimited orelse Reservs < MaxReservs ->
-  NewKey = NowNanos + Millis * 1000000,
-  NewTree = gb_trees:delete(Key, Tree),
-  NewEntry = Entry#entry{reservations = Reservs + 1},
-  {RealKey, NewQueue} =
-    insert(NewKey, NewEntry, Queue#timed_queue{tree = NewTree}),
-  {RealKey, Entry#entry.value, NewQueue};
-do_reserve(Key, _Entry, Millis, _NowNanos, Queue) ->
-  NewQueue = delete(Key, Queue),
-  reserve(Millis, NewQueue).
 
 -spec prolongate(key(), reservation_time(), queue())
                 -> {key(), value(), queue()} | {prolongation_error(), queue()}.
@@ -153,3 +110,50 @@ delete(Key, Queue = #timed_queue{tree = Tree}) ->
           Queue#timed_queue{tree = NewTree}
       end
   end.
+
+%% Internal functions
+
+-spec set_unique(queue(), any()) -> queue() | no_return().
+set_unique(Queue, true) ->
+  Queue#timed_queue{set = sets:new(), unique = true};
+set_unique(Queue, false) ->
+  Queue;
+set_unique(_Queue, _Unique) ->
+  error(bad_arg, {unique, must_be_boolean}).
+
+-spec set_max_reservations(queue(), any()) -> queue() | no_return().
+set_max_reservations(Queue, MaxReservations)
+  when is_integer(MaxReservations) andalso MaxReservations > 0 ->
+  Queue#timed_queue{max_reservations = MaxReservations};
+set_max_reservations(Queue, unlimited) ->
+  Queue;
+set_max_reservations(_Queue, _MaxReservations) ->
+  error(bad_arg, {max_reservations, must_be_positive_integer}).
+
+-spec insert(key(), entry(), queue()) -> {key(), queue()}.
+insert(Key, Entry, Queue = #timed_queue{tree = Tree}) ->
+  case gb_trees:is_defined(Key, Tree) of
+    true ->
+      insert(Key + 1, Entry, Queue); % find available key
+    false ->
+      NewTree = gb_trees:insert(Key, Entry, Tree),
+      {Key, Queue#timed_queue{tree = NewTree}}
+  end.
+
+-spec do_reserve(key(), entry(), reservation_time(), pos_integer(), queue())
+                -> {key(), value(), queue()} | {queue_empty, queue()}.
+do_reserve(Key,
+           Entry = #entry{reservations = Reservs},
+           Millis,
+           NowNanos,
+           Queue = #timed_queue{tree = Tree, max_reservations = MaxReservs})
+  when MaxReservs == unlimited orelse Reservs < MaxReservs ->
+  NewKey = NowNanos + Millis * 1000000,
+  NewTree = gb_trees:delete(Key, Tree),
+  NewEntry = Entry#entry{reservations = Reservs + 1},
+  {RealKey, NewQueue} =
+    insert(NewKey, NewEntry, Queue#timed_queue{tree = NewTree}),
+  {RealKey, Entry#entry.value, NewQueue};
+do_reserve(Key, _Entry, Millis, _NowNanos, Queue) ->
+  NewQueue = delete(Key, Queue),
+  reserve(Millis, NewQueue).
