@@ -1,0 +1,5 @@
+:name "timed-queue"
+:node-sname "timed-queue"
+:lib-dirs '("_build/test/lib" "_build/default/lib")
+:app-include-dirs '("include")
+:start-command "rebar3 as test do shell --sname timed-queue"

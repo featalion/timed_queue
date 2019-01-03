@@ -1,0 +1,6 @@
+*.o
+*.beam
+*.plt
+*.swp
+*.swo
+_build
