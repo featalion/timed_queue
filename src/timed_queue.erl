@@ -5,6 +5,7 @@
         , insert/2
         , reserve/2
         , prolongate/3
+        , release/2
         , delete/2
         ]).
 
@@ -25,12 +26,12 @@
                    , max_reservations => pos_integer()
                    }.
 
--type prolongation_error() :: key_not_exists | reservation_expired.
+-type key_error() :: key_not_exists | reservation_expired.
 
 -export_type([ queue/0
              , key/0
              , value/0
-             , prolongation_error/0
+             , key_error/0
              ]).
 
 %% API functions
@@ -81,7 +82,7 @@ reserve(Millis, Queue = #timed_queue{tree = Tree}) ->
   end.
 
 -spec prolongate(key(), reservation_time(), queue())
-                -> {key(), value(), queue()} | {prolongation_error(), queue()}.
+                -> {key(), value(), queue()} | {key_error(), queue()}.
 prolongate(Key, Millis, Queue = #timed_queue{tree = Tree}) ->
   case {gb_trees:is_defined(Key, Tree), Key > os:system_time(nanosecond)} of
     {true, true} ->
@@ -93,6 +94,24 @@ prolongate(Key, Millis, Queue = #timed_queue{tree = Tree}) ->
     {true, false} ->
       {reservation_expired, Queue};
     {false, _} ->
+      {key_not_exists, Queue}
+  end.
+
+-spec release(key(), queue()) -> queue() | {key_error(), queue()}.
+release(Key, Queue = #timed_queue{tree = Tree}) ->
+  case gb_trees:is_defined(Key, Tree) of
+    true ->
+      NowNanos = os:system_time(nanosecond),
+      case Key > NowNanos of
+        true ->
+          {Entry, NewTree} = gb_trees:take(Key, Tree),
+          {_NewKey, NewQueue} =
+            insert(NowNanos, Entry, Queue#timed_queue{tree = NewTree}),
+          {Key, Entry#entry.value, NewQueue};
+        false ->
+          {reservation_expired, Queue}
+      end;
+    false ->
       {key_not_exists, Queue}
   end.
 
