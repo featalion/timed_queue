@@ -107,7 +107,7 @@ release(Key, Queue = #timed_queue{tree = Tree}) ->
           {Entry, NewTree} = gb_trees:take(Key, Tree),
           {_NewKey, NewQueue} =
             insert(NowNanos, Entry, Queue#timed_queue{tree = NewTree}),
-          {Key, Entry#entry.value, NewQueue};
+          NewQueue;
         false ->
           {reservation_expired, Queue}
       end;
