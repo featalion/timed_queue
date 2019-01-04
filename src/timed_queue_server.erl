@@ -9,9 +9,10 @@
         , insert/2
         , prolongate/2
         , prolongate/3
-        , sync/1
+        , release/2
         , reserve/1
         , reserve/2
+        , sync/1
         ]).
 
 -export([ init/1
@@ -40,6 +41,8 @@
 start_link(Config = #{queue_name := QueueName}) ->
   gen_server:start_link({local, QueueName}, ?MODULE, Config, []).
 
+%% API functions
+
 -spec delete(atom(), integer()) -> ok.
 delete(QueueName, ReservationKey) ->
   gen_server:cast(QueueName, {delete, ReservationKey}).
@@ -48,9 +51,20 @@ delete(QueueName, ReservationKey) ->
 insert(QueueName, Values) ->
   gen_server:cast(QueueName, {insert, Values}).
 
--spec sync(atom()) -> ok.
-sync(QueueName) ->
-  gen_server:cast(QueueName, sync).
+-spec prolongate(atom(), timed_queue:key())
+                -> {ok, timed_queue:key()} | {error, timed_queue:key_error()}.
+prolongate(QueueName, ReservationKey) ->
+  gen_server:call(QueueName, {prolongate, ReservationKey}).
+
+-spec prolongate(atom(), timed_queue:key(), pos_integer())
+                -> {ok, timed_queue:key()} | {error, timed_queue:key_error()}.
+prolongate(QueueName, ReservationKey, ProlongationTime) ->
+  gen_server:call(QueueName, {prolongate, ReservationKey, ProlongationTime}).
+
+-spec release(atom(), timed_queue:key())
+             -> ok | {error, timed_queue:key_error()}.
+release(QueueName, ReservationKey) ->
+  gen_server:call(QueueName, {release, ReservationKey}).
 
 -spec reserve(atom()) -> {integer(), any()} | queue_empty.
 reserve(QueueName) ->
@@ -60,17 +74,11 @@ reserve(QueueName) ->
 reserve(QueueName, ReservationTime) ->
   gen_server:call(QueueName, {reserve, ReservationTime}).
 
--spec prolongate(atom(), timed_queue:key())
-                -> {ok, timed_queue:key()} |
-                   {error, key_not_exists | reservation_expired}.
-prolongate(QueueName, ReservationKey) ->
-  gen_server:call(QueueName, {prolongate, ReservationKey}).
+-spec sync(atom()) -> ok.
+sync(QueueName) ->
+  gen_server:cast(QueueName, sync).
 
--spec prolongate(atom(), timed_queue:key(), pos_integer())
-                -> {ok, timed_queue:key()} |
-                   {error, key_not_exists | reservation_expired}.
-prolongate(QueueName, ReservationKey, ProlongationTime) ->
-  gen_server:call(QueueName, {prolongate, ReservationKey, ProlongationTime}).
+%% Behavour functions (gen_server)
 
 -spec init(config()) -> {ok, state()}.
 init(Config = #{values := Values, reservation_time := _}) ->
@@ -89,7 +97,9 @@ init(Config = #{reservation_time := _}) ->
                  , state())
                  -> {reply
                     , reservation() | timed_queue:prolongation_error()
-                    , state()}.
+                    , state()};
+                 ({release, timed_queue:key()}, {pid(), any()}, state())
+                 -> {reply, ok | {error, timed_queue:key_error()}, state()}.
 handle_call(reserve, _From, State = #{reservation_time := ReservationTime}) ->
   reserve_and_reply(ReservationTime, State);
 handle_call({reserve, ReservationTime}, _From, State) ->
@@ -99,11 +109,21 @@ handle_call({prolongate, ReservationKey},
             State = #{reservation_time := ReservationTime}) ->
   prolongate_and_reply(ReservationKey, ReservationTime, State);
 handle_call({prolongate, ReservationKey, ReservationTime}, _From, State) ->
-  prolongate_and_reply(ReservationKey, ReservationTime, State).
+  prolongate_and_reply(ReservationKey, ReservationTime, State);
+handle_call({release, ReservationKey}, _From, State = #{queue := Queue}) ->
+  case timed_queue:release(ReservationKey, Queue) of
+    {Error, NewQueue} ->
+      {reply, {error, Error}, State#{queue => NewQueue}};
+    NewQueue ->
+      {reply, ok, State#{queue => NewQueue}}
+  end.
 
--spec handle_cast({insert, [timed_queue:value()]}, state()) -> {noreply, state()};
-                 ({delete, timed_queue:key()}, state())     -> {noreply, state()};
-                 (sync, state())                            -> {noreply, state()}.
+-spec handle_cast({insert, [timed_queue:value()]}, state())
+                 -> {noreply, state()};
+                 ({delete, timed_queue:key()}, state())
+                 -> {noreply, state()};
+                 (sync, state())
+                 -> {noreply, state()}.
 handle_cast({insert, Values}, State) ->
   NewState = insert_values(Values, State),
   {noreply, NewState};
@@ -124,7 +144,10 @@ handle_cast(sync, State) ->
 terminate(_Reason, _State) ->
   ok.
 
--spec reserve_and_reply(pos_integer(), state()) -> {reply, reservation(), state()}.
+%% Internal functions
+
+-spec reserve_and_reply(pos_integer(), state())
+                       -> {reply, reservation(), state()}.
 reserve_and_reply(ReservationTime, State = #{queue := Queue}) ->
   case timed_queue:reserve(ReservationTime, Queue) of
     {ReservationKey, Value, NewQueue} ->
@@ -135,7 +158,9 @@ reserve_and_reply(ReservationTime, State = #{queue := Queue}) ->
   end.
 
 -spec maybe_send_sync(state()) -> ok.
-maybe_send_sync(State = #{queue_name := QueueName, sync_fn := _, sync_interval := _}) ->
+maybe_send_sync(State = #{ queue_name := QueueName
+                         , sync_fn := _
+                         , sync_interval := _}) ->
   case should_sync(State) of
     {true, _} -> sync(QueueName);
     _         -> ok
@@ -171,17 +196,17 @@ sync_and_handle_result(State = #{queue_name := QueueName, sync_fn := {M, F, Args
   try
     case apply(M, F, Args) of
       {ok, Values} when is_list(Values) ->
-        io:format(user,
-                  "Queue ~p: got values from sync function, values=~p~n",
-                  [QueueName, Values]),
+        logger:debug("Queue ~p: got values from sync function, values=~p~n",
+                     [QueueName, Values]),
         insert_values(Values, State);
-      {error, Reason}                   ->
-        io:format(user, "Queue ~p: cannot sync values, reason=~p~n", [QueueName, Reason]),
+      {error, Reason} ->
+        logger:error("Queue ~p: cannot sync values, reason=~p~n", [QueueName, Reason]),
         State
     end
   catch
     C:R:S ->
-      logger:error("Queue ~p: error occured when sync queue, error=~p, reason=~p, stacktrace=~p~n",
-                   [QueueName, C, R, S]),
+      logger:critical(
+        "Queue ~p: error occured when sync queue, error=~p, reason=~p, stacktrace=~p~n",
+        [QueueName, C, R, S]),
       State
   end.
