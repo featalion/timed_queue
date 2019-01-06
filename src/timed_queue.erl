@@ -118,17 +118,10 @@ release(Key, Queue = #timed_queue{tree = Tree}) ->
 
 -spec delete(key(), queue()) -> queue().
 delete(Key, Queue = #timed_queue{tree = Tree}) ->
-  case gb_trees:take_any(Key, Tree) of
-    error ->
-      Queue;
-    {Entry, NewTree} ->
-      case Queue#timed_queue.unique of
-        true ->
-          NewVSet = sets:del_element(Entry#entry.value, Queue#timed_queue.set),
-          Queue#timed_queue{tree = NewTree, set = NewVSet};
-        false ->
-          Queue#timed_queue{tree = NewTree}
-      end
+  NowNanos = os:system_time(nanosecond),
+  case Key > NowNanos andalso gb_trees:is_defined(Key, Tree) of
+    false -> Queue;
+    true -> do_delete(Key, Queue)
   end.
 
 %% Internal functions
@@ -175,5 +168,15 @@ do_reserve(Key,
     insert(NewKey, NewEntry, Queue#timed_queue{tree = NewTree}),
   {RealKey, Entry#entry.value, NewQueue};
 do_reserve(Key, _Entry, Millis, _NowNanos, Queue) ->
-  NewQueue = delete(Key, Queue),
+  NewQueue = do_delete(Key, Queue),
   reserve(Millis, NewQueue).
+
+do_delete(Key, Queue = #timed_queue{tree = Tree, set = VSet}) ->
+  {Entry, NewTree} = gb_trees:take(Key, Tree),
+  case Queue#timed_queue.unique of
+    true ->
+      NewVSet = sets:del_element(Entry#entry.value, VSet),
+      Queue#timed_queue{tree = NewTree, set = NewVSet};
+    false ->
+      Queue#timed_queue{tree = NewTree}
+  end.
