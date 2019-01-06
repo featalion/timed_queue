@@ -28,10 +28,11 @@
 
 -type key_error() :: key_not_exists | reservation_expired.
 
--export_type([ queue/0
+-export_type([ config/0
              , key/0
-             , value/0
              , key_error/0
+             , queue/0
+             , value/0
              ]).
 
 %% API functions
