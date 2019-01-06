@@ -3,6 +3,7 @@
 -behaviour(gen_server).
 
 -export([ start_link/1
+        , stop/1
         ]).
 
 -export([ delete/2
@@ -24,6 +25,7 @@
 -type sync_fn() :: {module(), atom(), [any()]}.
 -type config() :: #{ queue_name := atom()
                    , reservation_time := pos_integer()
+                   , queue_config => timed_queue:config()
                    , sync_fn => sync_fn()
                    , sync_interval => non_neg_integer()
                    , values => [any()]
@@ -40,6 +42,10 @@
 -spec start_link(config()) -> {ok, pid()} | ignore | {error, any()}.
 start_link(Config = #{queue_name := QueueName}) ->
   gen_server:start_link({local, QueueName}, ?MODULE, Config, []).
+
+-spec stop(atom()) -> ok.
+stop(QueueName) ->
+  gen_server:stop(QueueName).
 
 %% API functions
 
@@ -82,9 +88,9 @@ sync(QueueName) ->
 
 -spec init(config()) -> {ok, state()}.
 init(Config = #{values := Values, reservation_time := _}) ->
-  Queue0 = timed_queue:new(),
+  Queue0 = timed_queue:new(maps:get(queue_config, Config, #{})),
   Queue = lists:foldl(fun timed_queue:insert/2, Queue0, Values),
-  State = maps:without([values], Config),
+  State = maps:without([queue_config, values], Config),
   {ok, State#{queue => Queue}};
 init(Config = #{reservation_time := _}) ->
   init(Config#{values => []}).
