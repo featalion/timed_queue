@@ -177,12 +177,12 @@ maybe_send_sync(_State) ->
 -spec should_sync(state()) -> {true | false, non_neg_integer()}.
 should_sync(State = #{ sync_fn := _
                      , sync_interval := SyncInterval}) ->
-  CurrentTime = erlang:system_time(second),
+  CurrentTime = erlang:system_time(millisecond),
   LastSynced = maps:get(last_synced, State, 0), % never synced by default
   SyncRequired = CurrentTime > LastSynced + SyncInterval,
   {SyncRequired, CurrentTime};
 should_sync(_State) ->
-  {false, erlang:system_time(second)}.
+  {false, erlang:system_time(millisecond)}.
 
 -spec insert_values(list(), state()) -> state().
 insert_values(Values, State = #{queue := Queue}) ->
@@ -191,10 +191,10 @@ insert_values(Values, State = #{queue := Queue}) ->
 
 prolongate_and_reply(ReservationKey, ReservationTime, State = #{queue := Queue}) ->
   case timed_queue:prolongate(ReservationKey, ReservationTime, Queue) of
-    {NewKey, Value, NewQueue} ->
-      {reply, {NewKey, Value}, State#{queue => NewQueue}};
-    Error ->
-      {reply, Error, State}
+    {NewKey, _Value, NewQueue} ->
+      {reply, {ok, NewKey}, State#{queue => NewQueue}};
+    {Error, NewQueue} ->
+      {reply, {error, Error}, State#{queue => NewQueue}}
   end.
 
 -spec sync_and_handle_result(state()) -> state().
