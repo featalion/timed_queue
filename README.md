@@ -15,6 +15,14 @@ The library contains two modules:
 * `timed_queue_server`, that implements a `gen_server` behaviour and provides an API
 to the queue functionality
 
+### Features
+
+* provides the queue functionality and a queue server implementation
+* the implementation guarantees unique reservation keys
+* supports a values uniqueness (using Erlang's `sets`) on demand
+* supports a reservations count limit on demand
+* nanosecond resolution (if supported by OS) of reservation time
+
 ### Quick example
 
 ```erl
